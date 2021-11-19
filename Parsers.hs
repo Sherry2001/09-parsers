@@ -151,13 +151,12 @@ a single result of that character and the rest of the (unparsed) string.
 -}
 
 get :: Parser Char
-get = P $ \s -> case s of
+get = P $ \case
   (c : cs) -> Just (c, cs)
   [] -> Nothing
 
 {-
 Try it out!
-
 ~~~~~{.haskell}
 ghci> doParse get "hey!"
 Just ('h',"ey!")
@@ -171,7 +170,11 @@ char of a (nonempty) string and interprets it as an int in the range
 -}
 
 oneDigit :: Parser Int
-oneDigit = undefined
+oneDigit = P $ \case
+  (c : cs) -> case (readMaybe [c] :: Maybe Int) of
+    Just i -> Just (i, cs)
+    Nothing -> Nothing
+  [] -> Nothing
 
 {-
 ~~~~~{.haskell}
@@ -188,8 +191,11 @@ as the unary negation operator, if it is `'-'`, and an identity function if it
 is `'+'`.
 -}
 
+-- >>> 1 + 2
+-- 3
+
 oneOp :: Parser (Int -> Int)
-oneOp = P $ \s -> case s of
+oneOp = P $ \case
   ('-' : cs) -> Just (negate, cs)
   ('+' : cs) -> Just (id, cs)
   _ -> Nothing
@@ -267,7 +273,7 @@ nil). Otherwise, if there are any characters at all, this parser fails.
 -}
 
 eof :: Parser ()
-eof = P $ \s -> case s of
+eof = P $ \case
   [] -> Just ((), [])
   _ : _ -> Nothing
 
@@ -288,7 +294,9 @@ Of course! Like lists, the type constructor `Parser` is a functor.
 
 instance Functor Parser where
   fmap :: (a -> b) -> Parser a -> Parser b
-  fmap = undefined
+  fmap f p = P $ \s -> do
+    (c, cs) <- doParse p s
+    return (f c, cs)
 
 {-
 With `get`, `satisfy`, `filter`, and `fmap`, we now have a small library
@@ -303,6 +311,8 @@ alphaChar, digitChar :: Parser Char
 alphaChar = satisfy isAlpha
 digitChar = satisfy isDigit
 
+-- >>> doParse alphaChar "123"
+-- Prelude.undefined
 {-
 ~~~~~~~~~~~~~~~~~~{.haskell}
 ghci> doParse alphaChar "123"
@@ -332,7 +342,7 @@ Finally, finish this parser that should parse just one specific `Char`:
 -}
 
 char :: Char -> Parser Char
-char c = undefined
+char c = satisfy (== c)
 
 {-
 ~~~~~~~~~~~{.haskell}
@@ -370,7 +380,10 @@ other and returns the pair of resulting values...
 -}
 
 pairP0 :: Parser a -> Parser b -> Parser (a, b)
-pairP0 = undefined
+pairP0 p1 p2 = P $ \s -> do
+  (c1, cs) <- doParse p1 s
+  (c2, cs') <- doParse p2 cs
+  return ((c1, c2), cs')
 
 {-
 and use that to rewrite `twoChar` more elegantly like this:
@@ -459,8 +472,11 @@ Let's go back and reimplement our examples with the applicative combinators:
 -}
 
 twoChar :: Parser (Char, Char)
-twoChar = pure (,) <*> get <*> get
+twoChar = (,) <$> get <*> get
 
+-- pure (,) <*> get <*> get
+-- >>> :t pure (,)
+-- pure (,) :: Applicative f => f (a -> b -> (a, b))
 signedDigit :: Parser Int
 signedDigit = oneOp <*> oneDigit
 
@@ -523,10 +539,15 @@ Here's an example of a parser that uses both operators. When we parse something
 surrounded by parentheses, don't want to keep either the opening or closing
 characters.
 -}
+-- >>> :t (>>)
+-- (>>) :: Monad m => m a -> m b -> m b
 
 -- | Parse something surrounded by parentheses
 parenP :: Parser a -> Parser a
 parenP p = char '(' *> p <* char ')'
+
+-- >>> doParse (parenP get) "(1)"
+-- Prelude.undefined
 
 {-
 ~~~~~{.haskell}
@@ -545,7 +566,9 @@ see if you can figure out an appropriate definition of `(>>=)`.
 -}
 
 bindP :: Parser a -> (a -> Parser b) -> Parser b
-bindP = undefined
+bindP p k = P $ \s -> do
+  (a, s') <- doParse p s
+  doParse (k a) s'
 
 {-
 Recursive Parsing
@@ -563,6 +586,9 @@ string :: String -> Parser String
 string "" = pure ""
 string (x : xs) = (:) <$> char x <*> string xs
 
+-- >>> doParse (string "mic") "mickeyMouse"
+-- Prelude.undefined
+
 {-
 Much better!
 
@@ -575,7 +601,7 @@ For fun, try to write `string` using `foldr` for the list recursion.
 -}
 
 string' :: String -> Parser String
-string' = foldr undefined undefined
+string' = foldr (liftA2 (:) . char) (pure "")
 
 {-
 Furthermore, we can use natural number recursion to write a parser that grabs
@@ -762,6 +788,8 @@ Let's use `some` to write a parser that will return an entire natural number
 oneNat :: Parser Int
 oneNat = fmap read (some digitChar) -- know that read will succeed because input is all digits
 
+-- >>> doParse oneNat "12345a"
+
 {-
 ~~~~~{.haskell}
 ghci> doParse oneNat "12345a"
@@ -774,7 +802,7 @@ implement a parser that parses zero or more occurrences of `p`, separated by
 -}
 
 sepBy :: Parser a -> Parser b -> Parser [a]
-sepBy p sep = undefined
+sepBy p sep = (:) <$> p <*> many (sep *> p) <|> pure []
 
 {-
 ~~~~~{.haskell}
